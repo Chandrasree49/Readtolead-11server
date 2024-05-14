@@ -35,7 +35,11 @@ async function startServer() {
     console.log("Connected to MongoDB");
     app.post("/api/jwt", (req, res) => {
       const { email } = req.body;
-      const token = jwt.sign({ email }, JWT_SECRET, { expiresIn: 86400 }); // Expires in 24 hours
+      const token = jwt.sign(
+        { email },
+        "u3TtYfwq8cD4gEn9rGmQhWjYmZq4t7w9z$C&F)J@NcRfUjXn2r5u8x/A?D(G+Kb",
+        { expiresIn: 86400 }
+      ); // Expires in 24 hours
       res.cookie("token", token, {
         httpOnly: true,
         secure: true,
@@ -113,7 +117,7 @@ async function startServer() {
       }
     });
 
-    app.get("/api/books/:category", async (req, res) => {
+    app.get("/api/booksbycat/:category", async (req, res) => {
       try {
         const category = req.params.category;
 
@@ -144,6 +148,29 @@ async function startServer() {
         res.status(200).json(book);
       } catch (error) {
         console.error("Error fetching book:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    app.post("/api/checkborrowed/:id", async (req, res) => {
+      try {
+        const { userEmail } = req.body;
+        const bookId = req.params.id;
+
+        // Check if the book with the given bookId exists in the bookCollection
+        const book = await borrowedBooksCollection.findOne({
+          bookid: new ObjectId(bookId),
+          userEmail: userEmail,
+        });
+        if (book) {
+          return res.status(200).json({ message: "yes" });
+        } else {
+          return res.status(200).json({ message: "no" });
+        }
+
+        // Check if the book with the given bookId is borrowed by the user with the given userEmail
+      } catch (error) {
+        console.error("Error checking borrowed book:", error);
         res.status(500).json({ message: "Internal server error" });
       }
     });
@@ -244,41 +271,8 @@ async function startServer() {
       }
     });
 
-    app.post("/return/:bookId/:userEmail", async (req, res) => {
-      try {
-        const bookId = req.params.bookId;
-        const userEmail = req.params.userEmail;
-
-        // Find the borrowed book by book ID and user email
-        const borrowedBook = await borrowedBooksCollection.findOne({
-          bookid: new ObjectId(bookId),
-          userEmail: userEmail,
-        });
-
-        if (!borrowedBook) {
-          return res
-            .status(404)
-            .json({ message: "Borrowed book not found for the user" });
-        }
-
-        // Increase the quantity of the book by 1 using the $inc operator
-        await bookCollection.updateOne(
-          { _id: new ObjectId(bookId) },
-          { $inc: { quantity: 1 } }
-        );
-
-        // Remove the borrowed book from the borrowedBooksCollection
-        await borrowedBooksCollection.deleteMany({
-          bookid: new ObjectId(bookId),
-          userEmail: userEmail,
-        });
-
-        res.status(200).json({ message: "Book returned successfully" });
-      } catch (error) {
-        console.error("Error returning book:", error);
-        res.status(500).json({ message: "Internal server error" });
-      }
-    });
+    
+    
 
     app.listen(port, () => {
       console.log(`Server is running on port: ${port}`);
