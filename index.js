@@ -88,6 +88,31 @@ async function startServer() {
       }
     });
 
+    app.put("/updatebook/:bookId", async (req, res) => {
+      try {
+        const bookId = req.params.bookId;
+
+        // Extract updated book data from the request body
+        const { image, name, authorName, category, rating } = req.body;
+
+        // Update the book information in the database
+        const result = await bookCollection.updateOne(
+          { _id: new ObjectId(bookId) },
+          { $set: { image, name, authorName, category, rating } }
+        );
+
+        if (result.modifiedCount === 0) {
+          // No book was updated (book with the provided ID not found)
+          return res.status(404).json({ message: "Book not found" });
+        }
+
+        res.status(200).json({ message: "Book updated successfully" });
+      } catch (error) {
+        console.error("Error updating book:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
     app.get("/api/books/:category", async (req, res) => {
       try {
         const category = req.params.category;
@@ -126,13 +151,23 @@ async function startServer() {
     app.post("/api/borrow/:id", async (req, res) => {
       try {
         const bookId = req.params.id;
-        const { userEmail, userName, returnDate } = req.body;
+        const { userEmail, userName, returnDate, borroweddate } = req.body;
 
         // Ensure userEmail and userName are provided in the request body
         if (!userEmail || !userName) {
           return res
             .status(400)
             .json({ message: "User email and display name are required" });
+        }
+
+        const bookData = await bookCollection.findOne({
+          _id: new ObjectId(bookId),
+        });
+
+        if (bookData.quantity <= 0) {
+          return res
+            .status(404)
+            .json({ message: "Book not available for borrowing" });
         }
 
         // Find the book by ID and decrement its quantity by 1 using the $inc operator
@@ -142,25 +177,105 @@ async function startServer() {
           { returnOriginal: false } // Return the updated document
         );
 
-        if (!book.value) {
-          // Book not found or quantity is already 0
-          return res
-            .status(404)
-            .json({ message: "Book not available for borrowing" });
-        }
+        console.log(book);
 
         // Add the borrowed book to the borrowedBooksCollection
         // Include all data of the borrowed book
         await borrowedBooksCollection.insertOne({
-          book: book.value, // Include all data of the borrowed book
+          bookid: book._id,
+          image: book.image,
+          name: book.name,
+          quantity: book.quantity,
+          authorName: book.authorName,
+          category: book.category,
+          shortDescription: book.shortDescription,
+          rating: book.rating,
+          borrower: book.borrower,
+          borrowedBy: book.borrowedBy,
+          addedBy: book.addedBy,
           userEmail,
           userName,
           returnDate, // Include return date from request body
+          borroweddate,
         });
 
         res.status(200).json({ message: "Book borrowed successfully" });
       } catch (error) {
         console.error("Error borrowing book:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    app.get("/borrowedbooks/:userEmail", async (req, res) => {
+      try {
+        const userEmail = req.params.userEmail;
+
+        // Find all borrowed books for the user with the provided email
+        const borrowedBooks = await borrowedBooksCollection
+          .find({ userEmail })
+          .toArray();
+
+        console.log(borrowedBooks);
+
+        // Retrieve detailed book information for each borrowed book
+        const detailedBorrowedBooks = await Promise.all(
+          borrowedBooks.map(async (borrowedBook) => {
+            // Find the detailed book information using the book ID
+            const book = await bookCollection.findOne({
+              _id: borrowedBook.bookid,
+            });
+            console.log(book);
+
+            return {
+              id: book._id,
+              image: book.image,
+              name: book.name,
+              category: book.category,
+              borrowedDate: borrowedBook.borrowedDate,
+              returnDate: borrowedBook.returnDate,
+            };
+          })
+        );
+
+        res.status(200).json(detailedBorrowedBooks);
+      } catch (error) {
+        console.error("Error fetching borrowed books:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    app.post("/return/:bookId/:userEmail", async (req, res) => {
+      try {
+        const bookId = req.params.bookId;
+        const userEmail = req.params.userEmail;
+
+        // Find the borrowed book by book ID and user email
+        const borrowedBook = await borrowedBooksCollection.findOne({
+          bookid: new ObjectId(bookId),
+          userEmail: userEmail,
+        });
+
+        if (!borrowedBook) {
+          return res
+            .status(404)
+            .json({ message: "Borrowed book not found for the user" });
+        }
+
+        // Increase the quantity of the book by 1 using the $inc operator
+        await bookCollection.updateOne(
+          { _id: new ObjectId(bookId) },
+          { $inc: { quantity: 1 } }
+        );
+
+        // Remove the borrowed book from the borrowedBooksCollection
+        await borrowedBooksCollection.deleteMany({
+          bookid: new ObjectId(bookId),
+          userEmail: userEmail,
+        });
+
+        res.status(200).json({ message: "Book returned successfully" });
+      } catch (error) {
+        console.error("Error returning book:", error);
         res.status(500).json({ message: "Internal server error" });
       }
     });
